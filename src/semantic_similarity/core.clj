@@ -1,18 +1,10 @@
 (ns semantic-similarity.core
   (:require [clojure.java.shell :refer [sh]]
-            [clojure.string :as string :refer [lower-case split]]
+            [clojure.string :as string]
             [semantic-similarity.vector :as vector]))
 
 (defmacro word-net [& body]
   `(:out (sh "wn" ~@body)))
-
-(defn print-seq [seq]
-  (doseq [item seq]
-    (println item)))
-
-(defn print-n-return [thing]
-  (println thing)
-  thing)
 
 (defn get-only-alpha [my-str]
   (string/replace my-str #"[^a-zA-Z]" ""))
@@ -23,11 +15,13 @@
              (conj acc letter)  ; add the letter to the list
              acc))              ; just return the list
           []
-   (let [response (word-net word)]
-     (into {} (map #(vector
-                     (first %)
-                     (.contains response (str "Information available for " (second %))))
-                   {"n" "noun" "v" "verb"})))))
+          (let [response (word-net word)]
+            (merge
+             {}
+             (when (.contains response "Information available for noun")
+               {"n" "noun"})
+             (when (.contains response "Information available for verb")
+               {"v" "verb"})))))
 
 (defn get-word-trees [word]
   (map #(word-net word (str "-hype" %)) 
@@ -58,11 +52,11 @@
         (hash-map 
           :word (get-only-alpha split-synonym)
           :level level-num)) 
-      (split level-string #","))})}))
+      (string/split level-string #","))})}))
 
 
 (defn split-str-into-senses [word-tree-string]
-  (rest (apply concat (map #(split %1 #"Sense") word-tree-string))))
+  (rest (apply concat (map #(string/split %1 #"Sense") word-tree-string))))
 
 (defn children-from-parent [sense]
   (reduce 
@@ -106,7 +100,7 @@
            (strange-data-structure :sense)))))
 
 (defn handle-a-sense [sense]
-  (let [split-levels (rest (split sense #"\n"))] 
+  (let [split-levels (rest (string/split sense #"\n"))] 
     (->> split-levels
         (reduce handle-a-level 
                 {:id -1 :cur-path [] :sense []})
@@ -171,7 +165,7 @@
 (defn semantic-max [semantic-structs]
   (first (sort-by :score > semantic-structs)))
 
-(defonce stop-words (split (slurp "resources/stopwords.txt") #"\n"))
+(defonce stop-words (string/split (slurp "resources/stopwords.txt") #"\n"))
 
 (defn stop-word? [s]
   (contains? stop-words s))
@@ -190,14 +184,14 @@
                    :else                               0)
           :w2 branch-word
           :sentence-index 1}))
-     (split branch-sentence #"\s+")))))
+     (string/split branch-sentence #"\s+")))))
 
 ;; makes a list of (word best-branch-word-match-plus-score)
 (defn get-half-si-vector [base-sentence branch-sentence]
   (map
    (fn [base-word]
      (make-word-score-pair base-word branch-sentence))
-   (split base-sentence #"\s+")))
+   (string/split base-sentence #"\s+")))
 
 (defn get-word-counts [si-vector]
   (reduce
@@ -216,9 +210,9 @@
 (def frequency-map
   (into {} (map
             (fn [word-&-freq]
-              (let  [[word frequency] (split word-&-freq #",")]
-                [(lower-case word) (parse-int frequency)]))
-            (split (slurp "resources/word-freq.csv") #"\n"))))
+              (let  [[word frequency] (string/split word-&-freq #",")]
+                [(string/lower-case word) (parse-int frequency)]))
+            (string/split (slurp "resources/word-freq.csv") #"\n"))))
  
 (defn information-content [word-struct si-vec]
   (let [count (frequency-map (first word-struct))]
@@ -263,7 +257,7 @@
        (map
         (fn [word]
           [word {:score 1 :w2 word :sentence-index 0}])
-        (split sentence1 #"\s+"))
+        (string/split sentence1 #"\s+"))
        (get-half-si-vector sentence2 sentence1))
       (assign-information-content-weight)
       (assign-word-order joint-word-set)
@@ -286,7 +280,7 @@
     (map #(do
             (list %1
                   (si-map %1)))
-         (split sentence #"\s+"))))
+         (string/split sentence #"\s+"))))
 
 (defn order-score [sentence0 si-vec0 sentence1 si-vec1]
   (let 
@@ -311,17 +305,11 @@
 ;; blast off, (you gotta have fun right?)
 (def ^:const semantic-over-order 0.7)
 
-(defn <-by-order [item1 item2]
-  (if (< (:word-order (second item1)) 
-         (:word-order (second item2)))
-    true
-    false))
-
 (defn joint-words [sentence1 sentence2]
   (apply sorted-set
          (concat 
-          (split sentence1 #"\s+") 
-          (split sentence2 #"\s+"))))
+          (string/split sentence1 #"\s+") 
+          (string/split sentence2 #"\s+"))))
 
 (defn get-sentence-similarity [base-sentence branch-sentence]
   (let [sentences [(string/lower-case base-sentence)
