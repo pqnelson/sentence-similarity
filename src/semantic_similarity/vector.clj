@@ -19,6 +19,6 @@
 (defn dot-product [vec1 vec2]
   (apply + (map * vec1 vec2)))
 
-(defn cross-product [vec1 vec2]
-  ; pretend that this vec is not transposed
-  (map #(* %1 %2) vec1 vec2))
+;; https://en.wikipedia.org/wiki/Matrix_multiplication#Hadamard_product
+(defn hadamard-product [vec1 vec2]
+  (map * vec1 vec2))
