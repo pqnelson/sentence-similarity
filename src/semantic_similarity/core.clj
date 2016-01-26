@@ -1,69 +1,54 @@
-(ns semantic-similarity.core)
-(require '[clojure.math.numeric-tower :as math])
-(use '[clojure.java.shell :only [sh]])
-(use '[clojure.string :only [lower-case split]])
-(use '[semantic-similarity.vector :only [vec-subtract vec-add vec-norm vec-dot-product cross-product]])
+(ns semantic-similarity.core
+  (:require [clojure.math.numeric-tower :as math]
+            [clojure.java.shell :refer [sh]]
+            [clojure.string :as string :refer [lower-case split]]
+            [semantic-similarity.vector :refer :all]))
 
 (def letters #{\a,\b,\c,\d,\e,\f,\g,\h,\i,\j,\k,\l,\m,\n,\o,\p,\q,\r,\s,\t,\u,\v,\w,\x,\y,\z,
                \A,\B,\C,\D,\E,\F,\G,\H,\I,\J,\K,\L,\M,\N,\O,\P,\Q,\R,\S,\T,\U,\V,\W,\X,\Y,\Z})
 
 (defn print-seq [seq]
-  (doseq [item seq] (println item))
-  )
+  (doseq [item seq]
+    (println item)))
 
 (defn print-n-return [thing]
   (println thing)
   thing)
 
 (defn get-only-alpha [my-str]
-  (apply str (filter #(letters %) my-str)))
+  (string/replace my-str #"[^a-zA-Z]" ""))
 
 (defn get-part-of-speech [word]
-  (reduce #(if (second %2)        ;part of speech is true  
-             (conj %1 (first %2)) ;add the letter to the list
-             %1)                  ;just return the list
-          [] 
+  (reduce (fn [acc [letter part-of-speech?]]
+            (if part-of-speech? ; part of speech is true  
+             (conj acc letter)  ; add the letter to the list
+             acc))              ; just return the list
+          []
    (let [response (:out (sh "wn" word))]
-    (into {} (map #(vector (first %) 
-                  (if (.contains response (str "Information available for " (second %)))
-                    true
-                    false))
-      {"n" "noun" "v" "verb"})))))
+     (into {} (map #(vector
+                     (first %)
+                     (.contains response (str "Information available for " (second %))))
+                   {"n" "noun" "v" "verb"})))))
 
 (defn get-word-trees [word]
   (map #(:out (sh "wn" word (str "-hype" %))) 
        (get-part-of-speech word))) 
 
 (defn determine-levels [synonym-string]
-  (if (not (.contains synonym-string "=>"))
+  (if-not (.contains synonym-string "=>")
     0
     (let [indent-count (.indexOf synonym-string "=>")]
       (/ (- indent-count 3) 4)))) 
  
 
 (defn handle-a-level [state level-string]
-  ;(println "<handle-a-level level-string>")
-  ;(println level-string)
-  ;(println "</handle-a-level level-string>")
   (let [level-num (determine-levels level-string)
-
-        id (+ (state :id) 1)
-
-        cur-path
-          (if (> (count (state :cur-path)) level-num)
-              (conj (subvec (state :cur-path) 0 level-num) id) 
-              (conj (state :cur-path) id))
-        ] 
-    ;(println "<handle-a-level level-num>")
-    ;(println level-num)
-    ;(println "</handle-a-level level-num>")
-
-  {
-   :id
-   id
-
-   :cur-path
-   cur-path
+        id (inc (state :id))
+        cur-path (if (> (count (state :cur-path)) level-num)
+                   (conj (subvec (state :cur-path) 0 level-num) id) 
+                   (conj (state :cur-path) id))]
+  {:id id
+   :cur-path cur-path
 
    :sense 
    (conj (state :sense)
@@ -81,9 +66,6 @@
   (rest (apply concat (map #(split %1 #"Sense") word-tree-string))))
 
 (defn children-from-parent [sense]
-  ;(println "<Children-from-parent Sense>")
-  ;(println sense)
-  ;(println "</Children-from-parent Sense>")
   (reduce 
     (fn [child-struct level] (if (level :parent) 
                                (assoc child-struct 
@@ -95,12 +77,8 @@
     sense))
 
 (defn depth-from-children-struct [children-struct]
-  ;(println "<Children Struct>")
-  ;(println children-struct)
-  ;(println "</Children Struct>")
   (loop [depth-struct (sorted-map)
          index (- (count children-struct) 1)]
-    ;(println index)
     (let [new-depth-struct
           (if (> (count (children-struct index)) 0)
             (assoc depth-struct index (+ 1 
@@ -113,9 +91,8 @@
                                               (children-struct index))
                                          (depth-struct (first (children-struct index))))))
             (assoc depth-struct index 1))]
-      ;(println new-depth-struct)
       (if (= 0 index)
-        new-depth-struct  ;terminating condition 
+        new-depth-struct  ; terminating condition 
         (recur new-depth-struct (- index 1))))))
 
 (defn insert-depths [strange-data-structure]
@@ -186,173 +163,144 @@
           (grouping1 key)))
       (keys grouping1)))))
 
-(def alpha 0.2)
-(def beta 0.45)
-(def e 2.7182818284590452353602874713527)
+(def ^:const alpha 0.2)
+(def ^:const beta 0.45)
+(def ^:const e Math/E)
 
 (defn depth-score [depth]
-  (/ (- (math/expt e (* beta depth)) 
-        (math/expt e (* -1 beta depth)))
-     (+ (math/expt e (* beta depth))
-        (math/expt e (* -1 beta depth)))))
+  (/ (- (Math/exp (* beta depth)) 
+        (Math/exp (* -1 beta depth)))
+     (+ (Math/exp (* beta depth))
+        (Math/exp (* -1 beta depth)))))
 
 (defn length-score [length]
-  (math/expt e (* -1 alpha length)))
+  (Math/exp (* -1 alpha length)))
+
+(defn score-item [item]
+  (* (depth-score (:depth item))
+     (length-score (:length item))))
 
 (defn make-score [tree]
-  (reduce max
-   (map (fn [item]
-         (* 
-           (depth-score (item :depth))
-           (length-score (item :length))))
-        tree)))
+  (apply max
+   (map score-item tree)))
 
 ;I NEED TO FIND LENGTH
-
 (defn test-semantics [word1 word2]
-  (let [
-    
-    tree1
-    
-    (-> word1 
-    (get-word-trees)
-    (tree-to-level-map))
-
-    tree2
-
-    (-> word2 
-    (get-word-trees)
-    (tree-to-level-map)) 
-
-
-    ancestors 
-    (get-common-ancestors tree1 tree2)]
-
-    (if (> (count ancestors) 0)
-      (make-score ancestors)
+  (let [tree1 (-> word1 
+                  (get-word-trees)
+                  (tree-to-level-map))
+        tree2 (-> word2
+                  (get-word-trees)
+                  (tree-to-level-map)) 
+        ancestors (get-common-ancestors tree1 tree2)]
+    (if (empty? ancestors)
       0
-      )))
+      (make-score ancestors))))
 
-(def semantic-vector-threshold 0.3)
+(def ^:const semantic-vector-threshold 0.3)
+
+(defrecord SemanticWord [score
+                         word
+                         sentence-index])
 
 (defn semantic-max [semantic-structs]
-  (reduce 
-    #(if (> (:score %1) (:score %2))
-      %1 
-      %2)
-  semantic-structs))
+  (first (sort-by :score > semantic-structs)))
 
-(def stop-words 
-  (split (slurp "resources/stopwords.txt") #"\n"))
+(defonce stop-words (split (slurp "resources/stopwords.txt") #"\n"))
 
-(defn get-half-si-vector [sentence1 sentence2]
+(defn stop-word? [s]
+  (> (.indexOf stop-words s)))
+
+(defn make-word-score-pair [word branch-sentence]
+  (list    
+   word
+   (semantic-max
+    (map
+     (fn [branch-word]
+       (let [score (test-semantics word branch-word)]
+         {:score (cond
+                   (> (.indexOf branch-sentence word) -1) 1
+                   (stop-word? word)                      0
+                   (> score semantic-vector-threshold)    score
+                   :else                                  0)
+          :w2 branch-word
+          :sentence-index 1}))
+     (split branch-sentence #" ")))))
+
+;; makes a list of (word best-branch-word-match-plus-score)
+(defn get-half-si-vector [base-sentence branch-sentence]
   (map
-    (fn [word1]
-      (list    ;makes a list of (word max-score)
-        word1
-        (semantic-max   ;gets the max of those scores
-          (map ;will return scores of t1i * t2
-            (fn [word2]
-              ;(println "<word score>")
-              ;(println word1)
-              ;(println sentence2)
-              (let [score (test-semantics word1 word2)]
-                ;(println score)
-              ;(println "</word score>")
-                (if (< (.indexOf stop-words word1) -1)
-                  {:score 0 :w2 word2 :sentence-index 1}
-                 (if (> (.indexOf sentence2 word1) -1)
-                  {:score 1 :w2 word1 :sentence-index 1} 
-                  (if (> score semantic-vector-threshold)
-                      {:score score :w2 word2 :sentence-index 1}
-                      {:score 0 :w2 word2 :sentence-index 1} )))))
-               (split sentence2 #" ")))))
-    (split sentence1 #" ")))
+   (fn [base-word]
+     (make-word-score-pair base-word branch-sentence))
+   (split base-sentence #" ")))
 
 (defn get-word-counts [si-vector]
   (reduce
     (fn [count-map word-struct]
-      (if (contains? count-map (first word-struct))
-        (assoc count-map (first word-struct) (+ (count-map (first word-struct)) 1))
-        (assoc count-map (first word-struct) 1)))
+      (assoc count-map
+             (first word-struct)
+             (inc (get count-map (first word-struct) 0))))
     {}
     si-vector))
 
-
-(def tot-words-in-corpus 329794508)
+(def ^:const tot-words-in-corpus 329794508)
 
 (defn parse-int  [s]
-     (Integer.  (re-find  #"\d+" s )))
+  (Integer. (re-find #"\d+" s)))
 
 (def frequency-map
-  (into {} (map 
-    (fn [word-&-freq]
-        (let  [[word frequency] (split word-&-freq #",")]
-          [(lower-case word) (parse-int frequency)])
-      )
-    (split (slurp "resources/word-freq.csv") #"\n"))))
+  (into {} (map
+            (fn [word-&-freq]
+              (let  [[word frequency] (split word-&-freq #",")]
+                [(lower-case word) (parse-int frequency)]))
+            (split (slurp "resources/word-freq.csv") #"\n"))))
  
-
 (defn get-information-content [word-struct si-vec]
-
-  (let [
-        count (frequency-map (first word-struct))
-        ]
-    (println count)
-   (- 1 
-     (/
-      (Math/log (+ (if count count 0) 1))
-      (Math/log (+ tot-words-in-corpus 1))))))
-
-(defn get-joint-word-set [sentence1 sentence2]
-  (apply sorted-set (concat 
-    (split sentence1 #" ") 
-    (split sentence2 #" "))))
-
-
-(defn pre-process-sentence [sentence]
-  (lower-case sentence))
+  (let [count (frequency-map (first word-struct))]
+    (if-not count
+      1
+      (- 1 
+         (/ (Math/log (inc count))
+            (Math/log (inc tot-words-in-corpus)))))))
 
 (defn assign-word-order [si-vec joint-word-set]
-  (let [ jws-as-vec
-        (into [] joint-word-set)]
-  (map 
-    #(list 
-       (first %1)
-       (assoc 
-          (second %1)
-          :word-order
-          (.indexOf jws-as-vec (first %1))))
-    si-vec)))
+  (let [jws-as-vec (into [] joint-word-set)]
+    (map (fn [[base-word branch-word-match]]
+           [base-word
+            (assoc branch-word-match
+                   :word-order
+                   (.indexOf jws-as-vec base-word))])
+         si-vec)))
 
 (defn assign-information-content-weight [si-vec]
-   (map 
-     (fn [item]
-       (list
-         (first item)
-         (assoc (second item) :weight (get-information-content item si-vec))))
-      si-vec))
+  (map
+   (fn [[base-word branch-match :as item]]
+     [base-word
+      (assoc branch-match :weight (get-information-content item si-vec))])
+   si-vec))
 
 (defn si-to-set [si-vector joint-word-set]
-  ;we will count the number of times words occur 
-  (into [] (reduce 
-    #(if (contains? %1 (first %2))
-         (assoc %1 (first %2) 
-            (assoc (second %2) :sentence-index 3))
-         (assoc %1 (first %2) (second %2)))
-    {}
-    si-vector)))
+  ; we will count the number of times words occur 
+  (into [] (reduce
+            (fn [seen [base-word branch-match]]
+              (assoc seen
+                     base-word
+                     (if (contains? seen base-word)
+                       (assoc branch-match :sentence-index 3)
+                       branch-match)))
+            {}
+            si-vector)))
 
 (defn get-full-si-vector [sentence1 sentence2 joint-word-set]
   (-> (concat
-    (map 
-     (fn [word]
-       (list word {:score 1 :w2 word :sentence-index 0})) 
-     (split sentence1 #" "))
-    (get-half-si-vector sentence2 sentence1))
-  (assign-information-content-weight)
-  (assign-word-order joint-word-set)
-  (si-to-set joint-word-set))) 
+       (map 
+        (fn [word]
+          (list word {:score 1 :w2 word :sentence-index 0})) 
+        (split sentence1 #" "))
+       (get-half-si-vector sentence2 sentence1))
+      (assign-information-content-weight)
+      (assign-word-order joint-word-set)
+      (si-to-set joint-word-set)))
  
 (defn filter-by-sentence [si-vec sentence-index]
   (map
@@ -364,84 +312,63 @@
          (assoc (second %1) :score 0 :word-order 0)))
     si-vec))
 
-(defmacro extract-from-si-vec [key-to-extract si-vec]
- `(map
-    #(~key-to-extract (second %1))
-    ~si-vec))
+(defn extract-from-si-vec [k si-vec]
+  (map (comp k second) si-vec))
 
 (defn map-si-vec-to-sentence [sentence si-vec]
-  ;(println "<sentence>")
-  ;(println sentence)
-  ;(println "</sentence>")
   (let [si-map (into {} si-vec )]
-  (map #(do
-         (list %1 
-              (si-map %1)))
-    (split sentence #" "))))
+    (map #(do
+            (list %1
+                  (si-map %1)))
+         (split sentence #" "))))
 
 (defn order-score [sentence0 si-vec0 sentence1 si-vec1]
   (let 
-    [r0
-     (extract-from-si-vec :word-order 
-        (map-si-vec-to-sentence sentence0 si-vec0))
-     ;(filter-by-sentence si-vec 0) 
-
-     r1
-     (extract-from-si-vec :word-order 
-        (map-si-vec-to-sentence sentence1 si-vec1))
-     ]
+    [r0 (extract-from-si-vec :word-order 
+                             (map-si-vec-to-sentence sentence0 si-vec0))
+     r1 (extract-from-si-vec :word-order 
+                             (map-si-vec-to-sentence sentence1 si-vec1))]
     (- 1 
        (/ (vec-norm (vec-subtract r0 r1))
-       (vec-norm (vec-add r0 r1))))))
+          (vec-norm (vec-add r0 r1))))))
 
-(defn semantic-score [si-vec0 si-vec1]
-  (let [
-    scores0 (extract-from-si-vec :score si-vec0)
+(defn semantic-score [base-si-vec branch-si-vec]
+  (let [base-score-vec (cross-product (extract-from-si-vec :score si-vec0)
+                                      (extract-from-si-vec :weight si-vec0))
+        branch-score-vec (cross-product (extract-from-si-vec :score si-vec1)
+                                        (extract-from-si-vec :weight si-vec1))]
+  (/ (vec-dot-product base-score-vec branch-score-vec)
+     (* (vec-norm base-score-vec) (vec-norm branch-score-vec)))))
 
-    scores1 (extract-from-si-vec :score si-vec1) 
-
-    weights0 (extract-from-si-vec :weight si-vec0)
-
-    weights1 (extract-from-si-vec :weight si-vec1)
-    
-    s0 (cross-product scores0 weights0)
-    s1 (cross-product scores1 weights1)]
-    
-  (/ (vec-dot-product s0 s1)
-     (* (vec-norm s0) (vec-norm s1)))))
-
-(def semantic-over-order 0.7);blast off, (you gotta have fun right?)
+;; blast off, (you gotta have fun right?)
+(def ^:const semantic-over-order 0.7)
 
 (defn <-by-order [item1 item2]
-  (if (< 
-    (:word-order (second item1)) 
-    (:word-order (second item2)))
+  (if (< (:word-order (second item1)) 
+         (:word-order (second item2)))
     true
-    false)) 
+    false))
 
-(defn get-sentence-similarity [sentence1 sentence2]
-  (let [ 
-     sentences
-     [(pre-process-sentence sentence1)
-      (pre-process-sentence sentence2)]
+(defn joint-words [sentence1 sentence2]
+  (apply sorted-set
+         (concat 
+          (split sentence1 #" ") 
+          (split sentence2 #" "))))
 
-     joint-word-set
-     (get-joint-word-set (first sentences) (second sentences))
-
-     si-vec0
-     (sort <-by-order
-      (get-full-si-vector 
-        (first sentences) (second sentences) joint-word-set))
-
-     si-vec1
-     (sort <-by-order
-      (get-full-si-vector 
-        (second sentences) (first sentences) joint-word-set))] 
-
-
-    (+ 
-      (* (- 1 semantic-over-order) (order-score 
-                                     (first sentences) si-vec0 
-                                     (second sentences) si-vec1))
-      (* semantic-over-order (semantic-score si-vec0 si-vec1)))))
+(defn get-sentence-similarity [base-sentence branch-sentence]
+  (let [sentences [(string/lower-case base-sentence)
+                   (string/lower-case branch-sentence)]
+        joint-word-set (joint-words (first sentences) (second sentences))
+        si-vec0 (sort-by :word-order
+                         (get-full-si-vector
+                          (first sentences) (second sentences) joint-word-set))
+        si-vec1 (sort-by :word-order
+                         (get-full-si-vector
+                          (second sentences) (first sentences) joint-word-set))]
+    (+ (* (- 1 semantic-over-order)
+          (order-score 
+           (first sentences) si-vec0 
+           (second sentences) si-vec1))
+       (* semantic-over-order
+          (semantic-score si-vec0 si-vec1)))))
 
