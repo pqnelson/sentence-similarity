@@ -299,10 +299,12 @@
           (vector/norm (vector/add r0 r1))))))
 
 (defn semantic-score [base-si-vec branch-si-vec]
-  (let [base-score-vec (cross-product (extract-from-si-vec :score si-vec0)
-                                      (extract-from-si-vec :weight si-vec0))
-        branch-score-vec (cross-product (extract-from-si-vec :score si-vec1)
-                                        (extract-from-si-vec :weight si-vec1))]
+  (let [base-score-vec (vector/cross-product
+                        (extract-from-si-vec :score base-si-vec)
+                        (extract-from-si-vec :weight base-si-vec))
+        branch-score-vec (vector/cross-product
+                          (extract-from-si-vec :score branch-si-vec)
+                          (extract-from-si-vec :weight branch-si-vec))]
   (/ (vector/dot-product base-score-vec branch-score-vec)
      (* (vector/norm base-score-vec) (vector/norm branch-score-vec)))))
 

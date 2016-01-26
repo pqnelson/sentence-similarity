@@ -1,22 +1,22 @@
 (ns semantic-similarity.vector)
 
-(defn vec-subtract  [vec1 vec2]
+(defn subtract  [vec1 vec2]
   (map - vec1 vec2))
 
-(defn vec-add [vec1 vec2]
+(defn add [vec1 vec2]
   (map + vec1 vec2))
 
 (defn- sq [x] (* x x))
 
-(defn vec-norm [vec]
+(defn norm [vec]
   (Math/sqrt
     (reduce + (map sq vec))))
 
-(defn vec-normalize [vec]
-  (map #(/ %1 (vec-norm vec))
+(defn normalize [vec]
+  (map #(/ %1 (norm vec))
        vec))
 
-(defn vec-dot-product [vec1 vec2]
+(defn dot-product [vec1 vec2]
   (apply + (map * vec1 vec2)))
 
 (defn cross-product [vec1 vec2]
